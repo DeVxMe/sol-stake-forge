@@ -1,6 +1,13 @@
-import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
+import { AnchorProvider, BN, Program, web3 } from "@coral-xyz/anchor";
 import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
 import { WalletContextState } from "@solana/wallet-adapter-react";
+import * as borsh from "borsh";
+
+// Import buffer for browser compatibility  
+import { Buffer } from "buffer";
+if (typeof window !== 'undefined') {
+  window.Buffer = Buffer;
+}
 
 // Program ID for the stake program
 export const PROGRAM_ID = new PublicKey("6wjCHbb4fJivBCesGtUmPEdHRVKaQFa5v1KDZCXC9TGo");
@@ -299,16 +306,29 @@ export async function getStakeAccount(userPublicKey: PublicKey): Promise<StakeAc
     
     if (!accountInfo) return null;
     
-    // Parse account data manually (simplified for this example)
+    // Parse account data using borsh (simplified deserialization)
     const data = accountInfo.data;
-    // This would need proper deserialization based on the account structure
-    // For now, we'll return a mock structure
+    
+    // Skip the discriminator (8 bytes) and parse the account structure
+    if (data.length < 8) return null;
+    
+    const accountData = data.slice(8);
+    
+    // StakeAccount structure: owner(32) + staked_amount(8) + total_points(8) + last_updated_time(8) + bump(1)
+    if (accountData.length < 57) return null;
+    
+    const owner = new PublicKey(accountData.slice(0, 32));
+    const stakedAmount = new BN(accountData.slice(32, 40), 'le');
+    const totalPoints = new BN(accountData.slice(40, 48), 'le');
+    const lastUpdatedTime = new BN(accountData.slice(48, 56), 'le');
+    const bump = accountData[56];
+    
     return {
-      owner: userPublicKey,
-      stakedAmount: new BN(0),
-      totalPoints: new BN(0),
-      lastUpdatedTime: new BN(Date.now() / 1000),
-      bump: 0
+      owner,
+      stakedAmount,
+      totalPoints,
+      lastUpdatedTime,
+      bump
     };
   } catch (error) {
     console.error("Error fetching stake account:", error);

@@ -1,20 +1,22 @@
 import { useState, useEffect, useCallback } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
-import { LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, SystemProgram, Transaction } from "@solana/web3.js";
 import { 
   createProgram, 
   getUserPDA, 
   checkPDAExists, 
   getStakeAccount, 
-  StakeAccount 
+  StakeAccount,
+  PROGRAM_ID 
 } from "@/lib/anchor";
 import { solToLamports } from "@/lib/utils";
-import toast from "react-hot-toast";
+import { useToast } from "@/hooks/use-toast";
 import BN from "bn.js";
 
 export const useStaking = () => {
-  const { publicKey, signTransaction } = useWallet();
+  const { publicKey, signTransaction, sendTransaction } = useWallet();
   const { connection } = useConnection();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [balance, setBalance] = useState(0);
   const [stakeAccount, setStakeAccount] = useState<StakeAccount | null>(null);
@@ -29,9 +31,13 @@ export const useStaking = () => {
       setBalance(balance / LAMPORTS_PER_SOL);
     } catch (error) {
       console.error("Error fetching balance:", error);
-      toast.error("Failed to fetch wallet balance");
+      toast({
+        title: "Error",
+        description: "Failed to fetch wallet balance",
+        variant: "destructive"
+      });
     }
-  }, [publicKey, connection]);
+  }, [publicKey, connection, toast]);
 
   // Fetch stake account data
   const fetchStakeAccount = useCallback(async () => {
@@ -49,50 +55,93 @@ export const useStaking = () => {
       }
     } catch (error) {
       console.error("Error fetching stake account:", error);
-      toast.error("Failed to fetch stake account");
+      toast({
+        title: "Error",
+        description: "Failed to fetch stake account",
+        variant: "destructive"
+      });
     }
-  }, [publicKey]);
+  }, [publicKey, toast]);
 
   // Create PDA account
   const createPdaAccount = useCallback(async () => {
-    if (!publicKey || !signTransaction) {
-      toast.error("Wallet not connected");
+    if (!publicKey || !sendTransaction) {
+      toast({
+        title: "Error", 
+        description: "Wallet not connected",
+        variant: "destructive"
+      });
       return false;
     }
 
     setLoading(true);
     try {
-      // This is a simplified version - in a real implementation,
-      // you would use the actual Anchor program to create the PDA
+      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
       const [pdaAddress, bump] = getUserPDA(publicKey);
       
-      // Mock transaction creation
-      toast.success("PDA account would be created here");
+      console.log("Creating PDA account:", pdaAddress.toString());
+      
+      const tx = await program.methods
+        .createPdaAccount()
+        .accounts({
+          payer: publicKey,
+          pdaAccount: pdaAddress,
+          systemProgram: SystemProgram.programId,
+        })
+        .transaction();
+
+      const signature = await sendTransaction(tx, connection);
+      console.log("PDA creation signature:", signature);
+      
+      // Wait for confirmation
+      await connection.confirmTransaction(signature, 'confirmed');
+      
+      toast({
+        title: "Success",
+        description: "Account created successfully"
+      });
+      
       setPdaExists(true);
       return true;
     } catch (error: any) {
       console.error("Error creating PDA:", error);
-      toast.error(`Failed to create account: ${error.message}`);
+      toast({
+        title: "Error",
+        description: `Failed to create account: ${error.message}`,
+        variant: "destructive"
+      });
       return false;
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction]);
+  }, [publicKey, sendTransaction, connection, toast]);
 
   // Stake SOL
   const stake = useCallback(async (amount: number) => {
-    if (!publicKey || !signTransaction) {
-      toast.error("Wallet not connected");
+    if (!publicKey || !sendTransaction) {
+      toast({
+        title: "Error",
+        description: "Wallet not connected", 
+        variant: "destructive"
+      });
       return;
     }
 
     if (amount <= 0) {
-      toast.error("Amount must be greater than 0");
+      toast({
+        title: "Error",
+        description: "Amount must be greater than 0",
+        variant: "destructive"
+      });
       return;
     }
 
     if (amount > balance) {
-      toast.error("Insufficient balance");
+      toast({
+        title: "Error", 
+        description: "Insufficient balance",
+        variant: "destructive"
+      });
       return;
     }
 
@@ -104,11 +153,33 @@ export const useStaking = () => {
         if (!created) return;
       }
 
+      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
+      const [pdaAddress] = getUserPDA(publicKey);
+      
       // Convert to lamports
       const lamports = solToLamports(amount);
       
-      // Mock staking transaction
-      toast.success(`Successfully staked ${amount} SOL`);
+      console.log("Staking amount:", amount, "SOL (", lamports.toString(), "lamports)");
+      
+      const tx = await program.methods
+        .stake(lamports)
+        .accounts({
+          user: publicKey,
+          pdaAccount: pdaAddress,
+          systemProgram: SystemProgram.programId,
+        })
+        .transaction();
+
+      const signature = await sendTransaction(tx, connection);
+      console.log("Stake signature:", signature);
+      
+      // Wait for confirmation
+      await connection.confirmTransaction(signature, 'confirmed');
+      
+      toast({
+        title: "Success",
+        description: `Successfully staked ${amount} SOL`
+      });
       
       // Refresh data
       await fetchBalance();
@@ -118,45 +189,99 @@ export const useStaking = () => {
       
       // Handle specific errors
       if (error.message.includes("6000")) {
-        toast.error("Amount must be greater than 0");
+        toast({
+          title: "Error",
+          description: "Amount must be greater than 0",
+          variant: "destructive"
+        });
       } else if (error.message.includes("6001")) {
-        toast.error("Insufficient staked amount");
+        toast({
+          title: "Error", 
+          description: "Insufficient staked amount",
+          variant: "destructive"
+        });
       } else if (error.message.includes("6002")) {
-        toast.error("Unauthorized access");
+        toast({
+          title: "Error",
+          description: "Unauthorized access", 
+          variant: "destructive"
+        });
       } else if (error.message.includes("6003")) {
-        toast.error("Arithmetic overflow");
+        toast({
+          title: "Error",
+          description: "Arithmetic overflow",
+          variant: "destructive"
+        });
       } else {
-        toast.error(`Staking failed: ${error.message}`);
+        toast({
+          title: "Error",
+          description: `Staking failed: ${error.message}`,
+          variant: "destructive"
+        });
       }
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction, balance, pdaExists, createPdaAccount, fetchBalance, fetchStakeAccount]);
+  }, [publicKey, sendTransaction, balance, pdaExists, createPdaAccount, fetchBalance, fetchStakeAccount, connection, toast]);
 
   // Unstake SOL
   const unstake = useCallback(async (amount: number) => {
-    if (!publicKey || !signTransaction) {
-      toast.error("Wallet not connected");
+    if (!publicKey || !sendTransaction) {
+      toast({
+        title: "Error",
+        description: "Wallet not connected",
+        variant: "destructive"
+      });
       return;
     }
 
     if (!stakeAccount) {
-      toast.error("No stake account found");
+      toast({
+        title: "Error",
+        description: "No stake account found", 
+        variant: "destructive"
+      });
       return;
     }
 
     if (amount <= 0) {
-      toast.error("Amount must be greater than 0");
+      toast({
+        title: "Error",
+        description: "Amount must be greater than 0",
+        variant: "destructive"
+      });
       return;
     }
 
     setLoading(true);
     try {
-      // Convert to lamports for comparison
+      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
+      const [pdaAddress] = getUserPDA(publicKey);
+      
+      // Convert to lamports for the transaction
       const lamports = solToLamports(amount);
       
-      // Mock unstaking transaction
-      toast.success(`Successfully unstaked ${amount} SOL`);
+      console.log("Unstaking amount:", amount, "SOL (", lamports.toString(), "lamports)");
+      
+      const tx = await program.methods
+        .unstake(lamports)
+        .accounts({
+          user: publicKey,
+          pdaAccount: pdaAddress,
+          systemProgram: SystemProgram.programId,
+        })
+        .transaction();
+
+      const signature = await sendTransaction(tx, connection);
+      console.log("Unstake signature:", signature);
+      
+      // Wait for confirmation
+      await connection.confirmTransaction(signature, 'confirmed');
+      
+      toast({
+        title: "Success",
+        description: `Successfully unstaked ${amount} SOL`
+      });
       
       // Refresh data
       await fetchBalance();
@@ -166,49 +291,102 @@ export const useStaking = () => {
       
       // Handle specific errors
       if (error.message.includes("6001")) {
-        toast.error("Insufficient staked amount");
+        toast({
+          title: "Error",
+          description: "Insufficient staked amount",
+          variant: "destructive"
+        });
       } else if (error.message.includes("6004")) {
-        toast.error("Arithmetic underflow");
+        toast({
+          title: "Error", 
+          description: "Arithmetic underflow",
+          variant: "destructive"
+        });
       } else {
-        toast.error(`Unstaking failed: ${error.message}`);
+        toast({
+          title: "Error",
+          description: `Unstaking failed: ${error.message}`,
+          variant: "destructive"
+        });
       }
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction, stakeAccount, fetchBalance, fetchStakeAccount]);
+  }, [publicKey, sendTransaction, stakeAccount, fetchBalance, fetchStakeAccount, connection, toast]);
 
   // Claim points
   const claimPoints = useCallback(async () => {
-    if (!publicKey || !signTransaction) {
-      toast.error("Wallet not connected");
+    if (!publicKey || !sendTransaction) {
+      toast({
+        title: "Error",
+        description: "Wallet not connected",
+        variant: "destructive"
+      });
       return;
     }
 
     if (!stakeAccount || stakeAccount.totalPoints.eq(new BN(0))) {
-      toast.error("No points to claim");
+      toast({
+        title: "Error",
+        description: "No points to claim",
+        variant: "destructive"
+      });
       return;
     }
 
     setLoading(true);
     try {
-      // Mock claiming transaction
-      toast.success(`Successfully claimed ${stakeAccount.totalPoints.toString()} points`);
+      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
+      const [pdaAddress] = getUserPDA(publicKey);
+      
+      console.log("Claiming points:", stakeAccount.totalPoints.toString());
+      
+      const tx = await program.methods
+        .claimPoints()
+        .accounts({
+          user: publicKey,
+          pdaAccount: pdaAddress,
+        })
+        .transaction();
+
+      const signature = await sendTransaction(tx, connection);
+      console.log("Claim signature:", signature);
+      
+      // Wait for confirmation
+      await connection.confirmTransaction(signature, 'confirmed');
+      
+      toast({
+        title: "Success",
+        description: `Successfully claimed ${stakeAccount.totalPoints.toString()} points`
+      });
       
       // Refresh data
       await fetchStakeAccount();
     } catch (error: any) {
       console.error("Error claiming points:", error);
-      toast.error(`Claiming failed: ${error.message}`);
+      toast({
+        title: "Error",
+        description: `Claiming failed: ${error.message}`,
+        variant: "destructive"
+      });
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction, stakeAccount, fetchStakeAccount]);
+  }, [publicKey, sendTransaction, stakeAccount, fetchStakeAccount, connection, toast]);
 
-  // Initial data fetch
+  // Initial data fetch and auto-refresh setup
   useEffect(() => {
     if (publicKey) {
       fetchBalance();
       fetchStakeAccount();
+      
+      // Auto-refresh every 10 seconds when wallet is connected
+      const interval = setInterval(() => {
+        fetchBalance();
+        fetchStakeAccount();
+      }, 10000);
+      
+      return () => clearInterval(interval);
     } else {
       setBalance(0);
       setStakeAccount(null);
