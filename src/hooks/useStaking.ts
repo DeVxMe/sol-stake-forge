@@ -1,16 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
 import BN from "bn.js";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
-import { LAMPORTS_PER_SOL, SystemProgram, Transaction, PublicKey, Keypair } from "@solana/web3.js";
-import { 
-  createProgram, 
-  getUserPDA, 
-  checkPDAExists, 
-  getStakeAccount, 
+import {
+  LAMPORTS_PER_SOL,
+  SystemProgram,
+  Transaction,
+  PublicKey,
+  Keypair,
+} from "@solana/web3.js";
+import {
+  createProgram,
+  getUserPDA,
+  checkPDAExists,
+  getStakeAccount,
   StakeAccount,
-  PROGRAM_ID 
+  PROGRAM_ID,
 } from "@/lib/anchor";
-import { solToLamports } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
 // Helper to get platform Keypair from env
@@ -45,7 +50,7 @@ export const useStaking = () => {
       toast({
         title: "Error",
         description: "Failed to fetch wallet balance",
-        variant: "destructive"
+        variant: "destructive",
       });
     }
   }, [publicKey, connection, toast]);
@@ -67,7 +72,7 @@ export const useStaking = () => {
       toast({
         title: "Error",
         description: "Failed to fetch stake account",
-        variant: "destructive"
+        variant: "destructive",
       });
     }
   }, [publicKey, toast]);
@@ -76,24 +81,30 @@ export const useStaking = () => {
   const createPdaAccount = useCallback(async () => {
     if (!publicKey || !sendTransaction) {
       toast({
-        title: "Error", 
+        title: "Error",
         description: "Wallet not connected",
-        variant: "destructive"
+        variant: "destructive",
       });
       return false;
     }
 
     setLoading(true);
     try {
-      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
-      const [pdaAddress, bump] = getUserPDA(publicKey);
+      const program = createProgram({
+        publicKey,
+        signTransaction,
+        sendTransaction,
+      } as any);
+      const [pdaAddress] = getUserPDA(publicKey);
+
       const tx = await program.methods
         .createPdaAccount()
         .accounts({
           payer: publicKey,
           pdaAccount: pdaAddress,
           systemProgram: SystemProgram.programId,
-        }).transaction();
+        })
+        .transaction();
 
       const { blockhash } = await connection.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
@@ -106,11 +117,11 @@ export const useStaking = () => {
 
       const rawTx = signedTx.serialize();
       const signature = await connection.sendRawTransaction(rawTx);
-      await connection.confirmTransaction(signature, 'confirmed');
+      await connection.confirmTransaction(signature, "confirmed");
 
       toast({
         title: "Success",
-        description: "Account created successfully"
+        description: "Account created successfully",
       });
       setPdaExists(true);
       return true;
@@ -119,7 +130,7 @@ export const useStaking = () => {
       toast({
         title: "Error",
         description: `Failed to create account: ${error.message}`,
-        variant: "destructive"
+        variant: "destructive",
       });
       return false;
     } finally {
@@ -127,251 +138,353 @@ export const useStaking = () => {
     }
   }, [publicKey, sendTransaction, signTransaction, connection, toast]);
 
-  // Stake SOL (amount goes to platform wallet)
-  const stake = useCallback(async (amount: number) => {
-    if (!publicKey || !sendTransaction) {
-      toast({
-        title: "Error",
-        description: "Wallet not connected", 
-        variant: "destructive"
-      });
-      return;
-    }
-
-    if (amount <= 0) {
-      toast({
-        title: "Error",
-        description: "Amount must be greater than 0",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
-    const walletBalanceLamports = await connection.getBalance(publicKey);
-    const feeBuffer = 10000; // buffer for fees (~0.00001 SOL)
-
-    if (walletBalanceLamports < lamports + feeBuffer) {
-      toast({
-        title: "Error", 
-        description: "Insufficient balance (including fee buffer)",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      if (!pdaExists) {
-        const created = await createPdaAccount();
-        if (!created) return;
+  // Stake SOL
+  const stake = useCallback(
+    async (amount: number) => {
+      if (loading) {
+        toast({
+          title: "Please wait",
+          description: "Transaction in progress",
+          variant: "destructive",
+        });
+        return;
       }
 
-      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
-      const [pdaAddress] = getUserPDA(publicKey);
-
-      const platformPubkey = getPlatformPubkey();
-      const transferIx = SystemProgram.transfer({
-        fromPubkey: publicKey,
-        toPubkey: platformPubkey,
-        lamports,
-      });
-
-      const stakeIx = await program.methods
-        .stake(new BN(lamports.toString()))
-        .accounts({
-          user: publicKey,
-          pdaAccount: pdaAddress,
-          systemProgram: SystemProgram.programId,
-        })
-        .instruction();
-
-      const tx = new Transaction();
-      tx.feePayer = publicKey;
-      tx.add(transferIx);
-      tx.add(stakeIx);
-
-      const { blockhash } = await connection.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-
-      let signedTx = tx;
-      if (signTransaction) {
-        signedTx = await signTransaction(tx);
+      if (!publicKey || !sendTransaction) {
+        toast({
+          title: "Error",
+          description: "Wallet not connected",
+          variant: "destructive",
+        });
+        return;
       }
 
-      const rawTx = signedTx.serialize();
-      const signature = await connection.sendRawTransaction(rawTx, { skipPreflight: false });
-      await connection.confirmTransaction(signature, 'confirmed');
+      if (amount <= 0) {
+        toast({
+          title: "Error",
+          description: "Amount must be greater than 0",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      toast({
-        title: "Success",
-        description: `Successfully staked ${amount} SOL`
-      });
+      setLoading(true);
+      try {
+        if (!pdaExists) {
+          const created = await createPdaAccount();
+          if (!created) return;
+        }
 
-      await fetchBalance();
-      await fetchStakeAccount();
-    } catch (error: any) {
-      console.error("Error staking:", error);
-      toast({
-        title: "Error",
-        description: `Staking failed: ${error.message}`,
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [publicKey, sendTransaction, signTransaction, pdaExists, createPdaAccount, connection, toast, fetchBalance, fetchStakeAccount]);
+        const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
+        const walletBalanceLamports = await connection.getBalance(publicKey);
+        const feeBuffer = 10000; // ~0.00001 SOL
+
+        if (walletBalanceLamports < lamports + feeBuffer) {
+          toast({
+            title: "Error",
+            description: "Insufficient balance (including fee buffer)",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const program = createProgram({
+          publicKey,
+          signTransaction,
+          sendTransaction,
+        } as any);
+        const [pdaAddress] = getUserPDA(publicKey);
+
+        const platformPubkey = getPlatformPubkey();
+        const transferIx = SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: platformPubkey,
+          lamports,
+        });
+
+        const stakeIx = await program.methods
+          .stake(new BN(lamports.toString()))
+          .accounts({
+            user: publicKey,
+            pdaAccount: pdaAddress,
+            systemProgram: SystemProgram.programId,
+          })
+          .instruction();
+
+        const tx = new Transaction();
+        tx.feePayer = publicKey;
+        tx.add(transferIx);
+        tx.add(stakeIx);
+
+        const { blockhash } = await connection.getLatestBlockhash();
+        tx.recentBlockhash = blockhash;
+
+        let signedTx = tx;
+        if (signTransaction) {
+          signedTx = await signTransaction(tx);
+        }
+
+        const rawTx = signedTx.serialize();
+        const signature = await connection.sendRawTransaction(rawTx, {
+          skipPreflight: false,
+        });
+        await connection.confirmTransaction(signature, "confirmed");
+
+        toast({
+          title: "Success",
+          description: `Successfully staked ${amount} SOL`,
+        });
+
+        await fetchBalance();
+        await fetchStakeAccount();
+      } catch (error: any) {
+        console.error("Error staking:", error);
+        if (typeof error.getLogs === "function") {
+          const logs = await error.getLogs();
+          console.error("Transaction simulation logs:", logs);
+        }
+        toast({
+          title: "Error",
+          description: `Staking failed: ${error.message}`,
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      loading,
+      publicKey,
+      sendTransaction,
+      signTransaction,
+      pdaExists,
+      createPdaAccount,
+      connection,
+      toast,
+      fetchBalance,
+      fetchStakeAccount,
+    ]
+  );
 
   // Unstake SOL
-  const unstake = useCallback(async (amount: number) => {
-    if (!publicKey || !sendTransaction) {
-      toast({
-        title: "Error",
-        description: "Wallet not connected",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    if (!stakeAccount) {
-      toast({
-        title: "Error",
-        description: "No stake account found", 
-        variant: "destructive"
-      });
-      return;
-    }
-
-    if (amount <= 0) {
-      toast({
-        title: "Error",
-        description: "Amount must be greater than 0",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
-    const stakedLamports = stakeAccount.stakedAmount.toNumber ? stakeAccount.staked.toNumber() : Number(stakeAccount.stakedAmount);
-
-    if (lamports > stakedLamports) {
-      toast({
-        title: "Error",
-        description: "Cannot unstake more than currently staked amount",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
-      const [pdaAddress] = getUserPDA(publicKey);
-
-      const tx = await program.methods
-        .unstake(new BN(lamports.toString()))
-        .accounts({
-          user: publicKey,
-          pdaAccount: pdaAddress,
-          systemProgram: SystemProgram.programId,
-        })
-        .transaction();
-
-      const { blockhash } = await connection.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = publicKey;
-
-      let signedTx = tx;
-      if (signTransaction) {
-        signedTx = await signTransaction(tx);
+  const unstake = useCallback(
+    async (amount: number) => {
+      if (loading) {
+        toast({
+          title: "Please wait",
+          description: "Transaction in progress",
+          variant: "destructive",
+        });
+        return;
       }
 
-      const rawTx = signedTx.serialize();
-      const signature = await connection.sendRawTransaction(rawTx, { skipPreflight: false });
-      await connection.confirmTransaction(signature, 'confirmed');
+      if (!publicKey || !sendTransaction) {
+        toast({
+          title: "Error",
+          description: "Wallet not connected",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      toast({
-        title: "Success",
-        description: `Successfully unstaked ${amount} SOL`
-      });
+      if (!stakeAccount) {
+        toast({
+          title: "Error",
+          description: "No stake account found",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      await fetchBalance();
-      await fetchStakeAccount();
-    } catch (error: any) {
-      console.error("Error unstaking:", error);
-      toast({
-        title: "Error",
-        description: `Unstaking failed: ${error.message}`,
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [publicKey, sendTransaction, signTransaction, stakeAccount, connection, toast, fetchBalance, fetchStakeAccount]);
+      if (amount <= 0) {
+        toast({
+          title: "Error",
+          description: "Amount must be greater than 0",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
+      const stakedLamports = stakeAccount.stakedAmount.toNumber
+        ? stakeAccount.stakedAmount.toNumber()
+        : Number(stakeAccount.stakedAmount);
+
+      if (lamports > stakedLamports) {
+        toast({
+          title: "Error",
+          description: "Cannot unstake more than currently staked amount",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const program = createProgram({
+          publicKey,
+          signTransaction,
+          sendTransaction,
+        } as any);
+        const [pdaAddress] = getUserPDA(publicKey);
+
+        const tx = await program.methods
+          .unstake(new BN(lamports.toString()))
+          .accounts({
+            user: publicKey,
+            pdaAccount: pdaAddress,
+            systemProgram: SystemProgram.programId,
+          })
+          .transaction();
+
+        const { blockhash } = await connection.getLatestBlockhash();
+        tx.recentBlockhash = blockhash;
+        tx.feePayer = publicKey;
+
+        let signedTx = tx;
+        if (signTransaction) {
+          signedTx = await signTransaction(tx);
+        }
+
+        const rawTx = signedTx.serialize();
+        const signature = await connection.sendRawTransaction(rawTx, {
+          skipPreflight: false,
+        });
+        await connection.confirmTransaction(signature, "confirmed");
+
+        toast({
+          title: "Success",
+          description: `Successfully unstaked ${amount} SOL`,
+        });
+
+        await fetchBalance();
+        await fetchStakeAccount();
+      } catch (error: any) {
+        console.error("Error unstaking:", error);
+        if (typeof error.getLogs === "function") {
+          const logs = await error.getLogs();
+          console.error("Transaction simulation logs:", logs);
+        }
+        toast({
+          title: "Error",
+          description: `Unstaking failed: ${error.message}`,
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      loading,
+      publicKey,
+      sendTransaction,
+      signTransaction,
+      stakeAccount,
+      connection,
+      toast,
+      fetchBalance,
+      fetchStakeAccount,
+    ]
+  );
 
   // Claim points
-  const claimPoints = useCallback(async () => {
-    if (!publicKey || !sendTransaction) {
-      toast({
-        title: "Error",
-        description: "Wallet not connected",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    if (!stakeAccount || !stakeAccount.totalPoints || Number(stakeAccount.totalPoints) === 0) {
-      toast({
-        title: "Error",
-        description: "No points to claim",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const program = createProgram({ publicKey, signTransaction, sendTransaction } as any);
-      const [pdaAddress] = getUserPDA(publicKey);
-
-      const tx = await program.methods
-        .claimPoints()
-        .accounts({
-          user: publicKey,
-          pdaAccount: pdaAddress,
-        })
-        .transaction();
-
-      const { blockhash } = await connection.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = publicKey;
-
-      let signedTx = tx;
-      if (signTransaction) {
-        signedTx = await signTransaction(tx);
+  const claimPoints = useCallback(
+    async () => {
+      if (loading) {
+        toast({
+          title: "Please wait",
+          description: "Transaction in progress",
+          variant: "destructive",
+        });
+        return;
       }
 
-      const rawTx = signedTx.serialize();
-      const signature = await connection.sendRawTransaction(rawTx, { skipPreflight: false });
-      await connection.confirmTransaction(signature, 'confirmed');
+      if (!publicKey || !sendTransaction) {
+        toast({
+          title: "Error",
+          description: "Wallet not connected",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      toast({
-        title: "Success",
-        description: `Successfully claimed ${stakeAccount.totalPoints.toString()} points`
-      });
+      if (
+        !stakeAccount ||
+        !stakeAccount.totalPoints ||
+        Number(stakeAccount.totalPoints) === 0
+      ) {
+        toast({
+          title: "Error",
+          description: "No points to claim",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      await fetchStakeAccount();
-    } catch (error: any) {
-      console.error("Error claiming points:", error);
-      toast({
-        title: "Error",
-        description: `Claiming failed: ${error.message}`,
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [publicKey, sendTransaction, signTransaction, stakeAccount, connection, toast, fetchStakeAccount]);
+      setLoading(true);
+      try {
+        const program = createProgram({
+          publicKey,
+          signTransaction,
+          sendTransaction,
+        } as any);
+        const [pdaAddress] = getUserPDA(publicKey);
+
+        const tx = await program.methods
+          .claimPoints()
+          .accounts({
+            user: publicKey,
+            pdaAccount: pdaAddress,
+          })
+          .transaction();
+
+        const { blockhash } = await connection.getLatestBlockhash();
+        tx.recentBlockhash = blockhash;
+        tx.feePayer = publicKey;
+
+        let signedTx = tx;
+        if (signTransaction) {
+          signedTx = await signTransaction(tx);
+        }
+
+        const rawTx = signedTx.serialize();
+        const signature = await connection.sendRawTransaction(rawTx, {
+          skipPreflight: false,
+        });
+        await connection.confirmTransaction(signature, "confirmed");
+
+        toast({
+          title: "Success",
+          description: `Successfully claimed ${stakeAccount.totalPoints.toString()} points`,
+        });
+
+        await fetchStakeAccount();
+      } catch (error: any) {
+        console.error("Error claiming points:", error);
+        if (typeof error.getLogs === "function") {
+          const logs = await error.getLogs();
+          console.error("Transaction simulation logs:", logs);
+        }
+        toast({
+          title: "Error",
+          description: `Claiming failed: ${error.message}`,
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      loading,
+      publicKey,
+      sendTransaction,
+      signTransaction,
+      stakeAccount,
+      connection,
+      toast,
+      fetchStakeAccount,
+    ]
+  );
 
   // Initial data fetch and auto-refresh setup
   useEffect(() => {
@@ -403,6 +516,6 @@ export const useStaking = () => {
     refresh: () => {
       fetchBalance();
       fetchStakeAccount();
-    }
+    },
   };
 };
